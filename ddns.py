@@ -7,11 +7,9 @@ import CloudFlare
 def update_dns_record(cloudflare_token, domain, subdomain, ip_version):
     # Get public IP
     if ip_version == "ipv4":
-        response = requests.get("https://api.ipify.org")
-        public_ip = response.text
+        public_ip = requests.get('https://ipv4.icanhazip.com').text.strip()
     elif ip_version == "ipv6":
-        response = requests.get("https://api6.ipify.org")
-        public_ip = response.text
+        public_ip = requests.get('https://ipv6.icanhazip.com').text.strip()
     else:
         raise ValueError("Invalid IP version: %s" % ip_version)
 
@@ -23,13 +21,14 @@ def update_dns_record(cloudflare_token, domain, subdomain, ip_version):
 
     # Query subdomain.domain
     try:
-        # Use local DNS to query subdomain.domain
-        dns_record = socket.gethostbyname(subdomain + '.' + domain)
+        # Use getaddrinfo to query subdomain.domain for both IPv4 and IPv6 addresses
+        dns_query_result = [ai[4][0]
+                            for ai in socket.getaddrinfo(subdomain + '.' + domain, None)]
     except socket.gaierror as e:
         raise ValueError("DNS lookup failed: %s" % e)
 
-    # Update DNS record if necessary
-    if dns_record == public_ip:
+    # Check if public IP is in DNS records
+    if public_ip in dns_query_result:
         print("DNS record is already up to date")
     else:
         # Create Cloudflare API client
