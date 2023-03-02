@@ -2,6 +2,7 @@ import requests
 import ipaddress
 import socket
 import CloudFlare
+import time
 
 
 def update_dns_record(cloudflare_token, domain, subdomain, ip_version):
@@ -68,6 +69,11 @@ def update_dns_record(cloudflare_token, domain, subdomain, ip_version):
 # Example usage
 cloudflare_token = '***'
 domain = 'example.com'
-subdomain = 'www'
 
+
+print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+subdomain = 'ipv4'
 update_dns_record(cloudflare_token, domain, subdomain, 'ipv4')
+subdomain = 'ipv6'
+update_dns_record(cloudflare_token, domain, subdomain, 'ipv6')
+print()
