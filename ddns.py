@@ -30,7 +30,7 @@ def update_dns_record(cloudflare_token, domain, subdomain, ip_version):
 
     # Check if public IP is in DNS records
     if public_ip in dns_query_result:
-        print("DNS record is already up to date")
+        print(f"{ip_version} DNS record is already up to date")
     else:
         # Create Cloudflare API client
         cf = CloudFlare.CloudFlare(token=cloudflare_token)
