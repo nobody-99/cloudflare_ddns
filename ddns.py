@@ -1,69 +1,80 @@
+import time
 import requests
 import ipaddress
-import socket
 import CloudFlare
-import time
 
 
 def update_dns_record(cloudflare_token, domain, subdomain, ip_version):
     # Get public IP
-    if ip_version == "ipv4":
-        public_ip = requests.get('https://ipv4.icanhazip.com').text.strip()
-    elif ip_version == "ipv6":
-        public_ip = requests.get('https://ipv6.icanhazip.com').text.strip()
+    if ip_version == 4:
+        ip_fetch_urls = ['https://ipv4.icanhazip.com',
+                         'https://ipv4.wtfismyip.com/text']
+    elif ip_version == 6:
+        ip_fetch_urls = ['https://ipv6.icanhazip.com',
+                         'https://ipv6.wtfismyip.com/text']
     else:
-        raise ValueError("Invalid IP version: %s" % ip_version)
+        return "Invalid IP version: %s" % ip_version
 
-    # Verify IP is valid
-    try:
-        ipaddress.ip_address(public_ip)
-    except ValueError:
-        raise ValueError("Invalid IP address: %s" % public_ip)
+    public_ip = None
+    for url in ip_fetch_urls:
+        try:
+            public_ip = requests.get(url, timeout=5).text.strip()
+            ipaddress.ip_address(public_ip)
+            break
+        except (requests.exceptions.RequestException, ValueError):
+            pass
+
+    if public_ip is None:
+        return "Failed to fetch public IP address"
+
+    # Create Cloudflare API client
+    cf = CloudFlare.CloudFlare(token=cloudflare_token)
 
     # Query subdomain.domain
-    try:
-        # Use getaddrinfo to query subdomain.domain for both IPv4 and IPv6 addresses
-        dns_query_result = [ai[4][0]
-                            for ai in socket.getaddrinfo(subdomain + '.' + domain, None)]
-    except socket.gaierror as e:
-        raise ValueError("DNS lookup failed: %s" % e)
+    zone = cf.zones.get(params={"name": domain})
+    if len(zone) == 0:
+        return "No matching domain found"
+    zone = zone[0]
+    dns_record_type = "A" if ip_version == 4 else "AAAA"
+    dns_records = cf.zones.dns_records.get(
+        zone["id"], params={"name": (subdomain + '.' + domain), "type": dns_record_type})
 
-    # Check if public IP is in DNS records
-    if public_ip in dns_query_result:
-        print(f"{ip_version} DNS record is already up to date")
-    else:
-        # Create Cloudflare API client
-        cf = CloudFlare.CloudFlare(token=cloudflare_token)
-
-        # Find DNS record
-        zone = cf.zones.get(params={"name": domain})
-        if len(zone) == 0:
-            raise ValueError("No matching domain found")
-        zone = zone[0]
+    # Create or update DNS record
+    if len(dns_records) == 0:
+        # Create new DNS record
         dns_record = {
-            "type": "A" if ip_version == "ipv4" else "AAAA",
+            "type": dns_record_type,
             "name": subdomain,
             "content": public_ip,
             "ttl": 1,
             "proxied": False
         }
-        dns_records = cf.zones.dns_records.get(
-            zone["id"], params={"name": subdomain, "type": dns_record["type"]})
-
-        # Update or create DNS record
-        if len(dns_records) == 0:
-            cf.zones.dns_records.post(zone["id"], data=dns_record)
-            print(
-                f"Successfully created DNS record for {subdomain}.{domain} with {ip_version} address {public_ip}")
-        elif len(dns_records) == 1:
-            dns_record["id"] = dns_records[0]["id"]
+        cf.zones.dns_records.post(zone["id"], data=dns_record)
+        return "DNS record created: %s.%s -> %s" % (subdomain, domain, public_ip)
+    elif len(dns_records) == 1:
+        # Update existing DNS record if necessary
+        dns_record = dns_records[0]
+        if dns_record["content"] != public_ip:
+            dns_record["content"] = public_ip
             cf.zones.dns_records.put(
                 zone["id"], dns_record["id"], data=dns_record)
-            print(
-                f"Successfully updated DNS record for {subdomain}.{domain} with {ip_version} address {public_ip}")
+            return "DNS record updated: %s.%s -> %s" % (subdomain, domain, public_ip)
         else:
-            raise ValueError("Multiple DNS records found: %s.%s" %
-                             (subdomain, domain))
+            return "DNS record is up to date: %s.%s -> %s" % (subdomain, domain, public_ip)
+    else:
+        # Delete duplicate DNS records
+        for i in range(1, len(dns_records)):
+            dns_record_id = dns_records[i]["id"]
+            cf.zones.dns_records.delete(zone["id"], dns_record_id)
+        # Update remaining DNS record if necessary
+        dns_record = dns_records[0]
+        if dns_record["content"] != public_ip:
+            dns_record["content"] = public_ip
+            cf.zones.dns_records.put(
+                zone["id"], dns_record["id"], data=dns_record)
+            return "DNS record updated: %s.%s -> %s, and duplicate DNS records deleted" % (subdomain, domain, public_ip)
+        else:
+            return "DNS record is up to date: %s.%s -> %s, and duplicate DNS records deleted" % (subdomain, domain, public_ip)
 
 
 # Example usage
@@ -72,8 +83,6 @@ domain = 'example.com'
 
 
 print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-subdomain = 'ipv4'
-update_dns_record(cloudflare_token, domain, subdomain, 'ipv4')
-subdomain = 'ipv6'
-update_dns_record(cloudflare_token, domain, subdomain, 'ipv6')
+print(update_dns_record(cloudflare_token, domain, 'ipv4', 4))
+print(update_dns_record(cloudflare_token, domain, 'ipv6', 6))
 print()
